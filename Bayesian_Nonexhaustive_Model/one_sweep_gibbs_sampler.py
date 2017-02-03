@@ -1,6 +1,5 @@
 # Implement one-sweep Gibbs sampler for Bayesian non-exhaustive classification (CIKM'16)
 # use clustering based Macro-F1 to evaluate the result
-# randomly split for training and test partition
 
 # Author: Baichuan Zhang 
 
