@@ -1,5 +1,8 @@
 # Implement one-sweep Gibbs sampler for Bayesian non-exhaustive classification (CIKM'16)
 # use clustering based Macro-F1 to evaluate the result
+# randomly split for training and test partition
+
+# try to fix some numerical issue
 
 # Author: Baichuan Zhang 
 
@@ -201,8 +204,18 @@ def estimate_alpha(num_train):
 
 def Multivariate_Student_t_likelihood(stud_t_1, stud_t_2, stud_t_3, testdata, latent_dimen):
 
-	x_vector = np.array(testdata).reshape(latent_dimen,1);		
+	# avoid numerical issue. For singular matrix (inverse not exist and determinant is 0), a quick hack is to add a very small value to the diagonal of matirx before inversion
+	
+	if np.linalg.det(stud_t_2) == 0:
+
+		smooth_term = math.pow(10, -6);
+		stud_t_2 = stud_t_2 + np.eye(latent_dimen) * smooth_term;
+		
+
 	log_det = np.log(np.linalg.det(stud_t_2));
+
+	x_vector = np.array(testdata).reshape(latent_dimen,1);			
+	
 	a = np.dot((x_vector - stud_t_1).reshape(1,latent_dimen), np.linalg.inv(stud_t_2));
 	Q = np.dot(a, (x_vector - stud_t_1));
 	Q_value = Q[0];
@@ -424,22 +437,30 @@ if __name__ == '__main__':
 
 	f1_list = [];
 
-	for run in range(0, 10):
+	for r1 in range(0, 10):
 
 		train_set_dict, test_set_list, test_label_list, num_train = Data_Split(doc_list, doc_featurelist_dict, doc_label_dict, percent, latent_dimen);
 
 		u_0_list, sigma_0 = parameter_estimatet(train_set_dict, latent_dimen, num_train, m);
 #		best_alpha = estimate_alpha(num_train);
-		aver_f1, predict_num_cluster, true_num_cluster = Gibbs(train_set_dict, test_set_list, test_label_list, latent_dimen, kapa, sigma_0, m, u_0_list, best_alpha, num_train);
 
-		print 'optimal concentration parameter in Dirichlet process is ' + str(best_alpha);
+		# under each training / test partition, run one-sweep Gibbs sampler 10 times 
+		f1_sum = 0.0;
 
-		f1_list.append(aver_f1);
+		for r2 in range(0, 10):
 
-		print 'number of true clusters is ' + str(true_num_cluster);
-		print 'number of predicted clusters is ' + str(predict_num_cluster);
-		print 'Macro-F1 is ' + str(aver_f1);
-		print;
+
+			aver_f1, predict_num_cluster, true_num_cluster = Gibbs(train_set_dict, test_set_list, test_label_list, latent_dimen, kapa, sigma_0, m, u_0_list, best_alpha, num_train);
+			f1_sum += aver_f1;
+
+			print 'number of true clusters is ' + str(true_num_cluster);
+			print 'number of predicted clusters is ' + str(predict_num_cluster);
+			print 'Macro-F1 is ' + str(aver_f1);
+			print;
+
+
+			
+		f1_list.append(float(f1_sum) / 10);
 
 	mean_f1 = np.mean(f1_list);
 	std_f1 = np.std(f1_list);
