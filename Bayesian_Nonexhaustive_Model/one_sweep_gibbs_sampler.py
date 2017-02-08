@@ -2,8 +2,6 @@
 # use clustering based Macro-F1 to evaluate the result
 # randomly split for training and test partition
 
-# try to fix some numerical issue
-
 # Author: Baichuan Zhang 
 
 
