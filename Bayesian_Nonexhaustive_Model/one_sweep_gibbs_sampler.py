@@ -1,9 +1,6 @@
-# Implement one-sweep Gibbs sampler for Bayesian non-exhaustive classification (CIKM'16)
-# use clustering based Macro-F1 to evaluate the result
-# randomly split for training and test partition
+# one-sweep Gibbs sampler for non-exhaustive classification 
 
 # Author: Baichuan Zhang 
-
 
 import os;
 import sys;
@@ -146,19 +143,23 @@ def parameter_estimatet(train_set_dict, latent_dimen, num_train, m):
 	data_list_list = [];
 
 	# initialize a K*K zero matrix
-	sigma_0 = np.zeros((latent_dimen, latent_dimen));
+	#sigma_0 = np.zeros((latent_dimen, latent_dimen));
 	
 	for k, v in train_set_dict.items():
 
 		D_j = np.array(v);
-		sigma_0 = sigma_0 + len(v) * np.cov(D_j.T, bias = 1);
+		#sigma_0 = sigma_0 + len(v) * np.cov(D_j.T, bias = 1);
 
 		for i in range(0,len(v)):
 
 			data_list_list.append(v[i]);
 
 	u_0_list = np.mean(np.array(data_list_list), axis=0).tolist();	
-	sigma_0 = (float(1)/(num_train - len(train_set_dict)))*(m-latent_dimen-1)*sigma_0;
+	#sigma_0 = (float(1)/(num_train - len(train_set_dict)))*(m-latent_dimen-1)*sigma_0;
+	
+	# use c*I to estimate sigma_0
+	smooth_term = float(latent_dimen * math.log(latent_dimen)) / 150;
+	sigma_0 = np.eye(latent_dimen) * smooth_term;
 	
 	return [u_0_list, sigma_0];
 
@@ -202,18 +203,8 @@ def estimate_alpha(num_train):
 
 def Multivariate_Student_t_likelihood(stud_t_1, stud_t_2, stud_t_3, testdata, latent_dimen):
 
-	# avoid numerical issue. For singular matrix (inverse not exist and determinant is 0), a quick hack is to add a very small value to the diagonal of matirx before inversion
-	
-	if np.linalg.det(stud_t_2) == 0:
-
-		smooth_term = math.pow(10, -6);
-		stud_t_2 = stud_t_2 + np.eye(latent_dimen) * smooth_term;
-		
-
+	x_vector = np.array(testdata).reshape(latent_dimen,1);		
 	log_det = np.log(np.linalg.det(stud_t_2));
-
-	x_vector = np.array(testdata).reshape(latent_dimen,1);			
-	
 	a = np.dot((x_vector - stud_t_1).reshape(1,latent_dimen), np.linalg.inv(stud_t_2));
 	Q = np.dot(a, (x_vector - stud_t_1));
 	Q_value = Q[0];
@@ -447,21 +438,12 @@ if __name__ == '__main__':
 
 		for r2 in range(0, 10):
 
-
 			aver_f1, predict_num_cluster, true_num_cluster = Gibbs(train_set_dict, test_set_list, test_label_list, latent_dimen, kapa, sigma_0, m, u_0_list, best_alpha, num_train);
 			f1_sum += aver_f1;
-
-			print 'number of true clusters is ' + str(true_num_cluster);
-			print 'number of predicted clusters is ' + str(predict_num_cluster);
-			print 'Macro-F1 is ' + str(aver_f1);
-			print;
-
-
 			
 		f1_list.append(float(f1_sum) / 10);
 
 	mean_f1 = np.mean(f1_list);
 	std_f1 = np.std(f1_list);
 
-	print 'Macro-F1 is ' + str(mean_f1);
-	print 'std is ' + str(std_f1);
+	print str(mean_f1) + ',' + str(std_f1);
