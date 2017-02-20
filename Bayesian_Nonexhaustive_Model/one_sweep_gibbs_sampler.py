@@ -1,4 +1,5 @@
-# one-sweep Gibbs sampler for non-exhaustive classification 
+# one sweep Gibbs sampler for Bayesian non-exhaustive classification
+# For Arnetminer dataset, split training and set based on temporal information of each publication
 
 # Author: Baichuan Zhang 
 
@@ -13,122 +14,74 @@ import scipy.stats as ss;
 import math;
 
 
-def File_Reader(feature_file, label_file):
+def File_Reader(file_name, latent_dimen, test_year_len):
 
-	# read the ground-truth file
+	data_matrix = np.loadtxt(str(file_name), delimiter = " ").tolist();
+	num_row = len(data_matrix);
+	num_col = len(data_matrix[0]);
 
-	doc_set = set();
-	doc_label_dict = {};
+	# sort the data_matrix based on publication year information
+	data_matrix.sort(key = lambda x: x[num_col - 1]);
+	label_list = map(int, np.array((np.array(data_matrix)[0:num_row, num_col-2:num_col-1])).T.tolist()[0]);
+ 	
+ 	year_list = map(int, np.array((np.array(data_matrix)[0:num_row, num_col-1:num_col])).T.tolist()[0])
+ 	sorted_year_list = sorted(list(set(year_list)));
 
-	for line in label_file:
+ 	test_year_list = sorted_year_list[len(sorted_year_list) - test_year_len:];
 
-		line = line.strip();
+ 	raw_train_list = [];
+ 	train_label_list = [];
 
-		if "<entity id" in line:
+ 	raw_test_list = [];
+ 	test_label_list = [];
 
-			# extract label information
-			label = int(line[line.find('"') + 1:line.rfind('"')].strip());
+ 	for i in range(0, len(data_matrix)):
 
-		elif "<doc rank" in line:
+ 		if year_list[i] not in test_year_list:
 
-			# extract doc information and consider rank id as doc id
-			doc_id = int(line[line.find('"') + 1: line.rfind('"')].strip());
-			doc_set.add(doc_id);
+ 			raw_train_list.append(data_matrix[i][0:num_col - 2]);
+ 			train_label_list.append(label_list[i]);
 
-			if doc_id not in doc_label_dict:
-				doc_label_dict[doc_id] = label;
+ 		else:
 
-			else:
-				# if one doc belongs to multiple labels, then we consider it as ambiguous case and discard them
-				del doc_label_dict[doc_id];
-				doc_set.remove(doc_id);
+ 			raw_test_list.append(data_matrix[i][0:num_col - 2]);
+ 			test_label_list.append(label_list[i]);
 
-		elif "<discarded>" in line:
-			
-			# for the unlabeled web link, discard them 
-			break;
+ 	num_train = len(train_label_list);
 
-	doc_list = list(doc_set);
+ 	# run batch-based NNMF on training set which is initially available
+ 	raw_train_matrix = np.array(raw_train_list);
+ 	nmf_model = NMF(n_components = latent_dimen, random_state = None);
+ 	nmf_model.fit(raw_train_matrix);
 
-	# read feature file
-	# first column is doc_id and the rest is feature values (all freq count)
+ 	# U_matrix is the user latent matrix
+ 	U_matrix = nmf_model.transform(raw_train_matrix).tolist();
 
-	doc_featurelist_dict = {};
+ 	# V_matrix is a set of item basis vector
+ 	V_matrix = nmf_model.components_;
 
-	for line in feature_file:
+ 	# from U_matrix, build train_set_dict
+ 	train_set_dict = {};
 
-		line = line.strip();
+ 	for tr in range(0, len(train_label_list)):
 
-		linetuple = line.split(",");
+ 		if train_label_list[tr] not in train_set_dict:
 
-		doc_index = int(linetuple[0]);
+ 			train_set_dict[train_label_list[tr]] = [U_matrix[tr]];
 
-		# only count for non-discard document
-		if doc_index in doc_list:
-			doc_featurelist_dict[doc_index] = map(int, linetuple[1:]);
+ 		else:
 
-	return [doc_list, doc_featurelist_dict, doc_label_dict];
+ 			train_set_dict[train_label_list[tr]].append(U_matrix[tr]);
 
+ 	# from V_matrix, use non-negative least square to obtain the latent features for each streaming test paper
+ 	test_set_list = [];
 
+ 	for te in range(0, len(raw_test_list)):
 
-def Data_Split(doc_list, doc_featurelist_dict, doc_label_dict, percent, latent_dimen):
-
-	# split training and test randomly 
-	train_set_dict = {};
-	test_set_list = [];
-	test_label_list = [];
-
-	random.shuffle(doc_list);
-	num_doc = len(doc_list);
-
-	num_train = int(percent * num_doc);
-	doc_train = doc_list[:num_train];
-	doc_test = doc_list[num_train:];
-
-	raw_train_doclist = [];
-
-	for i in doc_train:
-
-		raw_train_doclist.append(doc_featurelist_dict[i]);
-
-	raw_test_doclist = [];
-
-	for j in doc_test:
-
-		raw_test_doclist.append(doc_featurelist_dict[j]);
-		test_label_list.append(doc_label_dict[j]);
-
-	# run batch-based NNMF on training set
-	raw_train_matrix = np.array(raw_train_doclist);
-	nmf_model = NMF(n_components = latent_dimen, random_state = None);
-	nmf_model.fit(raw_train_matrix);
-
-	# U_matrix is the user latent matrix
-	U_matrix = nmf_model.transform(raw_train_matrix).tolist();
-
-	# V_matrix is a set of item basis vector
-	V_matrix = nmf_model.components_;
-
-	# from U_matrix, build train_set_dict
-	for tr in range(0, len(doc_train)):
-
-		train_label = doc_label_dict[doc_train[tr]];
-
-		if train_label not in train_set_dict:
-
-			train_set_dict[train_label] = [U_matrix[tr]];
-
-		else:
-
-			train_set_dict[train_label].append(U_matrix[tr]);
-
-	# from V_matrix, use non-negative least square to obtain the laten features for each streaming doc
-	
-	for te in range(0, len(raw_test_doclist)):
-
-		raw_test_vector = np.array(raw_test_doclist[te]);
-		test_latent_feature, rnorm = nnls(V_matrix.T, raw_test_vector);
+ 		raw_test_vector = np.array(raw_test_list[te]);
+ 		test_latent_feature, rnorm = nnls(V_matrix.T, raw_test_vector);
 		test_set_list.append(test_latent_feature);
+
 
 	return [train_set_dict, test_set_list, test_label_list, num_train];
 
@@ -143,23 +96,23 @@ def parameter_estimatet(train_set_dict, latent_dimen, num_train, m):
 	data_list_list = [];
 
 	# initialize a K*K zero matrix
-	#sigma_0 = np.zeros((latent_dimen, latent_dimen));
+	sigma_0 = np.zeros((latent_dimen, latent_dimen));
 	
 	for k, v in train_set_dict.items():
 
 		D_j = np.array(v);
-		#sigma_0 = sigma_0 + len(v) * np.cov(D_j.T, bias = 1);
+		sigma_0 = sigma_0 + len(v) * np.cov(D_j.T, bias = 1);
 
 		for i in range(0,len(v)):
 
 			data_list_list.append(v[i]);
 
 	u_0_list = np.mean(np.array(data_list_list), axis=0).tolist();	
-	#sigma_0 = (float(1)/(num_train - len(train_set_dict)))*(m-latent_dimen-1)*sigma_0;
+	sigma_0 = (float(1)/(num_train - len(train_set_dict)))*(m-latent_dimen-1)*sigma_0;
 	
 	# use c*I to estimate sigma_0
-	smooth_term = float(latent_dimen * math.log(latent_dimen)) / 150;
-	sigma_0 = np.eye(latent_dimen) * smooth_term;
+#	smooth_term = float(latent_dimen * math.log(latent_dimen)) / 150;
+#	sigma_0 = np.eye(latent_dimen) * smooth_term;
 	
 	return [u_0_list, sigma_0];
 
@@ -403,45 +356,39 @@ def Gibbs(train_set_dict, test_set_list, test_label_list, latent_dimen, kapa, si
 
 if __name__ == '__main__':
 	
-	if len(sys.argv) != 5:
 
-		print "feature filename";
-		print "label filename";
-		print "data split percent";
+	if len(sys.argv) != 4:
+
+		print "data matrix filename";
 		print "latent dimension";
+		print "test year length";
 		
 		sys.exit(0);
 
-	feature_file = open(sys.argv[1], 'r');
-	label_file = open(sys.argv[2], 'r');
-	percent = float(sys.argv[3]);
-	latent_dimen = int(sys.argv[4]);
 
-	kapa = 100.0;
+	file_name = str(sys.argv[1]);
+	latent_dimen = int(sys.argv[2]);
+	test_year_len = int(sys.argv[3]);
+
 	# m > latent_dimen + 2
 	m = latent_dimen + 100;
-	best_alpha = 100;
-
-	doc_list, doc_featurelist_dict, doc_label_dict = File_Reader(feature_file, label_file);
-
+	best_alpha = 50;
+	kapa = 100.0;
+	
+	train_set_dict, test_set_list, test_label_list, num_train = File_Reader(file_name, latent_dimen, test_year_len);
+	u_0_list, sigma_0 = parameter_estimatet(train_set_dict, latent_dimen, num_train, m);
+	
 	f1_list = [];
 
-	for r1 in range(0, 10):
+	for r1 in range(0, 20):
 
-		train_set_dict, test_set_list, test_label_list, num_train = Data_Split(doc_list, doc_featurelist_dict, doc_label_dict, percent, latent_dimen);
+		aver_f1, predict_num_cluster, true_num_cluster = Gibbs(train_set_dict, test_set_list, test_label_list, latent_dimen, kapa, sigma_0, m, u_0_list, best_alpha, num_train);	
+		f1_list.append(aver_f1);
 
-		u_0_list, sigma_0 = parameter_estimatet(train_set_dict, latent_dimen, num_train, m);
-#		best_alpha = estimate_alpha(num_train);
-
-		# under each training / test partition, run one-sweep Gibbs sampler 10 times 
-		f1_sum = 0.0;
-
-		for r2 in range(0, 10):
-
-			aver_f1, predict_num_cluster, true_num_cluster = Gibbs(train_set_dict, test_set_list, test_label_list, latent_dimen, kapa, sigma_0, m, u_0_list, best_alpha, num_train);
-			f1_sum += aver_f1;
-			
-		f1_list.append(float(f1_sum) / 10);
+		print 'true number of clusters is ' + str(true_num_cluster);
+		print 'predict number of clusters is ' + str(predict_num_cluster);
+		print 'average f1 is ' + str(aver_f1);
+		print;
 
 	mean_f1 = np.mean(f1_list);
 	std_f1 = np.std(f1_list);
